@@ -1,14 +1,34 @@
+/**
+ * PJaxRouter v1.0.1 by Martin Laxenaire
+ *
+ * Set up our routing script
+ *
+ * @param params (object): parameters object with our container, event callbacks...
+ *
+ * @constructor
+ */
 function PJaxRouter(params) {
     // init the router object
     this.router = {
-        isLoading: false,
         history: [{
             href: window.location.href,
             title: document.title,
         }],
-        ajaxCalls: 0,
     };
 
+    this._isLoading = false;
+    this._ajaxCalls = 0;
+
+    this._transitionsManager = {
+        override: false,
+        overrideDuration: 0,
+        isWaiting: false,
+    };
+
+    // could be useful to keep in cache our last link DOM element clicked
+    this.lastLinkClicked = null;
+
+    // used for our mutation observer
     this._mutations = {
         countMutations: 0,
         mutationObserver: null,
@@ -23,6 +43,15 @@ function PJaxRouter(params) {
 }
 
 
+/*** INIT ***/
+
+/**
+ * Init global params
+ *
+ * @param params (object): parameters object with our container, event callbacks...
+ *
+ * @private
+ */
 PJaxRouter.prototype._initParams = function(params) {
 
     // default params
@@ -40,11 +69,6 @@ PJaxRouter.prototype._initParams = function(params) {
             duration: 1000,
             value: function() {}
         },
-        onAfter: {
-            duration: 1000,
-            value: function() {}
-        },
-
         onWaiting: {
             value: function() {}
         },
@@ -58,10 +82,20 @@ PJaxRouter.prototype._initParams = function(params) {
     if(!this.params.container) {
         this.params.container = document.body;
     }
+    this.container = this.params.container;
 
 };
 
-
+/**
+ * Init all events necessited for navigation:
+ * - window hashchange
+ * - window popstate
+ * - window click: check for all clicks, then filter if it's a link that has been clicked and if we should launch navigation
+ *
+ * - if available, sets the mutation observer (useful to know when our data are appended)
+ *
+ * @private
+ */
 PJaxRouter.prototype._initEvents = function() {
     // keep a ref to our router
     var self = this;
@@ -143,6 +177,8 @@ PJaxRouter.prototype._initEvents = function() {
             return false;
         }
 
+        self.lastLinkClicked = e.target;
+
         e.preventDefault();
         e.stopPropagation();
 
@@ -154,8 +190,9 @@ PJaxRouter.prototype._initEvents = function() {
         this._mutations.isActive = true;
 
         this._mutations.mutationObserver = new MutationObserver(function(mutations, observer){
-            if( mutations[0].addedNodes.length || mutations[0].removedNodes.length )
+            if( mutations[0].addedNodes.length || mutations[0].removedNodes.length ) {
                 self._observedMutation(mutations);
+            }
         });
     }
 };
@@ -164,135 +201,59 @@ PJaxRouter.prototype._initEvents = function() {
 /*** ROUTING ***/
 
 
+/*** start routing ***/
+
+/**
+ * Global navigation handler:
+ * - Launches AJAX request and calls onStart parameter event
+ * - Wait during onLeaving duration parameter value then:
+ *     if AJAX request is done continue by calling _appendData()
+ *     if we're still waiting for the data, call _waitForData()
+ *
+ *
+ * @param href (string): URL to navigate to
+ * @param shouldUpdateHistory (bool): whether the router history object should be updated (true by default, false when navigation has been triggered by back/forth browser history)
+ *
+ * @private
+ */
 PJaxRouter.prototype._launchAjaxNavigation = function(href, shouldUpdateHistory) {
-    if(!this.router.isLoading) {
+    if(!this._isLoading) {
         this._routing(href, shouldUpdateHistory);
 
         // on before
-        this.params.onStart.value();
+        this.params.onStart.value(this.router.history[this.router.history.length - 1].href, href);
+
+        // do we need to override default transition duration?
+        var leavingDuration = this._transitionsManager.isOverriding ? this._transitionsManager.overrideDuration : this.params.onLeaving.duration;
 
         var self = this;
         setTimeout(function() {
-
-            self.params.onLeaving.value();
+            self.params.onLeaving.value(self.router.history[self.router.history.length - 1].href, href);
 
             if(self.router.nextHTMLContent) {
-                self._appendDatas(shouldUpdateHistory);
+                self._appendData(shouldUpdateHistory);
             }
             else {
-                self._waitForDatas(shouldUpdateHistory);
+                self._waitForData(shouldUpdateHistory);
             }
 
-        }, self.params.onLeaving.duration);
+        }, leavingDuration);
     }
 };
 
 
-PJaxRouter.prototype._waitForDatas = function(shouldUpdateHistory) {
-    var self = this;
-    var datasInterval = setInterval(function() {
-        if(self.router.nextHTMLContent) {
-            clearInterval(datasInterval);
-            self._appendDatas(shouldUpdateHistory);
-        }
-    }, 1000);
-
-};
-
-PJaxRouter.prototype._observedMutation = function(mutations) {
-    for(var i = 0; i < mutations.length; i++) {
-        var mutation = mutations[i];
-
-        // count that as a useful mutation only if a non text node is added
-        if(mutation.addedNodes.length > 0) {
-            this._mutations.countMutations++;
-        }
-    }
-
-    //if(this._mutations.countMutations === this._mutations.mutationNumbers) {
-    if(this._mutations.countMutations === 1) {
-        this._mutations.mutationObserver.disconnect();
-
-        var self = this;
-        setTimeout(function() {
-            self._newContentAdded();
-        }, 34); // wait for a couple tick just to be sure
-    }
-};
-
-
-PJaxRouter.prototype._newContentAdded = function() {
-    var self = this;
-    setTimeout(function() {
-        self.params.onReady.value();
-    }, 0);
-
-    setTimeout(function() {
-        // onAfter
-        self.router.isLoading = false;
-
-        self.params.onAfter.value();
-
-    }, self.params.onAfter.duration);
-};
-
-
-PJaxRouter.prototype._appendDatas = function(shouldUpdateHistory) {
-
-    var pageTitle = this.router.nextHTMLContent.match(/<title[^>]*>([^<]+)<\/title>/)[1];
-
-    // handle history with pushState
-    if(shouldUpdateHistory) {
-        window.history.pushState(this.router, pageTitle, this.router.nextHref);
-    }
-    document.title = pageTitle;
-
-    // keep trace of navigation inside our router
-    this.router.history.push({
-        href: this.router.nextHref,
-        title: pageTitle
-    });
-
-    // append our response to a div
-    var tempHtml = document.createElement('div');
-    tempHtml.insertAdjacentHTML("beforeend", this.router.nextHTMLContent);
-
-    var content = tempHtml.querySelector("#" + this.params.container.getAttribute("id"));
-    tempHtml = null;
-
-    var self = this;
-
-    if(content && content.children && content.children.length > 0) {
-        if(this._mutations.isActive) {
-            this._mutations.countMutations = 0;
-
-            this._mutations.mutationObserver.observe(this.params.container, {
-                childList: true,
-            });
-        }
-        else {
-            setTimeout(function() {
-                self._newContentAdded();
-            }, content.children.length * 25);
-        }
-
-
-        // empty our content div and append our new content
-        this.params.container.innerHTML = "";
-
-        var tempContent = document.createDocumentFragment();
-        while(content.hasChildNodes()) {
-            tempContent.appendChild(content.firstChild);
-        }
-        this.params.container.appendChild(tempContent);
-    }
-
-};
-
-
+/**
+ * This is where we're making our AJAX call and we're waiting for its response
+ * Can call onWaiting and onError callbacks if necessary
+ *
+ * @param href (string): URL to navigate to
+ * @param shouldUpdateHistory (bool): whether the router history object should be updated (true by default, false when navigation has been triggered by back/forth browser history)
+ *
+ * @private
+ */
 PJaxRouter.prototype._routing = function(href, shouldUpdateHistory) {
     // init our routing
-    this.router.isLoading = true;
+    this._isLoading = true;
     this.router.nextHref = null;
 
     // set next href
@@ -316,19 +277,19 @@ PJaxRouter.prototype._routing = function(href, shouldUpdateHistory) {
             if (xhr.readyState === 4 && (xhr.status === 200 || xhr.status === 0)) {
                 self.router.nextHTMLContent = xhr.response;
             }
-            else if(xhr.readyState === 4 && xhr.status !== 404 && self.router.ajaxCalls < 4) {
-                if(self.router.ajaxCall === 0) {
-                    self.params.onWaiting.value();
+            else if(xhr.readyState === 4 && xhr.status !== 404 && self._ajaxCalls < 4) {
+                if(self._ajaxCalls === 0 && !self._transitionsManager.isWaiting) {
+                    self._transitionsManager.isWaiting = true;
+                    self.params.onWaiting.value(self.router.history[self.router.history.length - 1].href, self.router.nextHref);
                 }
 
-                self.router.ajaxCalls++;
-                self._routing(href, shouldUpdateHistory);
+                self._ajaxCalls++;
+                self._routing(self.router.nextHref, shouldUpdateHistory);
             }
             else if(xhr.readyState === 4) {
-                self.router.ajaxCalls = 0;
-                self.router.isLoading = false;
+                self._resetRoutingState();
 
-                self.params.onError.value();
+                self.params.onError.value(self.router.history[self.router.history.length - 1].href, self.router.nextHref);
             }
         };
 
@@ -336,4 +297,179 @@ PJaxRouter.prototype._routing = function(href, shouldUpdateHistory) {
         xhr.setRequestHeader("Accept", "text/html");
         xhr.send(null);
     }
+};
+
+
+/*** waiting during routing ***/
+
+/**
+ * Called when our AJAX request has exceeded the onLeaving duration time
+ * Basically just sets up an interval to check if data have arrived
+ *
+ * @param shouldUpdateHistory (bool): whether the router history object should be updated (true by default, false when navigation has been triggered by back/forth browser history)
+ *
+ * @private
+ */
+PJaxRouter.prototype._waitForData = function(shouldUpdateHistory) {
+    // if onWaiting has not been called yet
+    if(!this._transitionsManager.isWaiting) {
+        this._transitionsManager.isWaiting = true;
+        this.params.onWaiting.value(this.router.history[this.router.history.length - 1].href, this.router.nextHref);
+    }
+
+    var self = this;
+    var dataInterval = setInterval(function() {
+        if(self.router.nextHTMLContent) {
+            clearInterval(dataInterval);
+            self._appendData(shouldUpdateHistory);
+        }
+    }, 1000);
+
+};
+
+
+/*** finishing the routing (appending the data) ***/
+
+/**
+ * * Check if data have been appended to our container, then call _newContentAdded()
+ *
+ * @param mutations (mutation object): see https://developer.mozilla.org/en-US/docs/Web/API/MutationObserver
+ *
+ * @private
+ * */
+PJaxRouter.prototype._observedMutation = function(mutations) {
+    for(var i = 0; i < mutations.length; i++) {
+        var mutation = mutations[i];
+
+        // count that as a useful mutation only if a non text node is added
+        if(mutation.addedNodes.length > 0) {
+            this._mutations.countMutations++;
+        }
+    }
+
+    if(this._mutations.countMutations === 1) {
+        this._mutations.mutationObserver.disconnect();
+
+        var self = this;
+        setTimeout(function() {
+            self._newContentAdded();
+        }, 34); // wait for a couple tick just to be sure
+    }
+};
+
+/**
+ * When data have been appended, just call our onReady callback and reset all AJAX call useful flags
+ *
+ * @private
+ */
+PJaxRouter.prototype._newContentAdded = function() {
+    var self = this;
+    setTimeout(function() {
+        self.params.onReady.value(
+            self.router.history[self.router.history.length - 2].href,
+            self.router.history[self.router.history.length - 1].href
+        );
+
+        // reset ajax calls and loading flags
+        self._resetRoutingState();
+    }, 0);
+};
+
+/**
+ * We have received the response from our AJAX call, now we need to append the data and update our router object
+ *
+ * @param shouldUpdateHistory (bool): whether the router history object should be updated (true by default, false when navigation has been triggered by back/forth browser history)
+ *
+ * @private
+ */
+PJaxRouter.prototype._appendData = function(shouldUpdateHistory) {
+
+    var pageTitle = this.router.nextHTMLContent.match(/<title[^>]*>([^<]+)<\/title>/)[1];
+
+    // handle history with pushState
+    if(shouldUpdateHistory) {
+        window.history.pushState(this.router, pageTitle, this.router.nextHref);
+    }
+    document.title = pageTitle;
+
+    // keep trace of navigation inside our router
+    this.router.history.push({
+        href: this.router.nextHref,
+        title: pageTitle
+    });
+
+    // append our response to a div
+    var tempHtml = document.createElement('div');
+    tempHtml.insertAdjacentHTML("beforeend", this.router.nextHTMLContent);
+
+    var content = tempHtml.querySelector("#" + this.container.getAttribute("id"));
+    tempHtml = null;
+
+    var self = this;
+
+    if(content && content.children && content.children.length > 0) {
+        if(this._mutations.isActive) {
+            this._mutations.countMutations = 0;
+
+            // start observing mutation to detect when the data will be appended
+            this._mutations.mutationObserver.observe(this.container, {
+                childList: true,
+            });
+        }
+        else {
+            // if no mutation observer just set a time out
+            setTimeout(function() {
+                self._newContentAdded();
+            }, content.children.length * 25);
+        }
+
+
+        // empty our content div and append our new content
+        var tempContent = document.createDocumentFragment();
+        while(content.hasChildNodes()) {
+            tempContent.appendChild(content.firstChild);
+        }
+        this.container.innerHTML = "";
+        this.container.appendChild(tempContent);
+    }
+
+};
+
+
+/**
+ * Called either after a successful navigation or on navigation cancelled to reset router's flags states
+ *
+ * @private
+ */
+PJaxRouter.prototype._resetRoutingState = function() {
+    // reset AJAX calls count
+    this._ajaxCalls = 0;
+    // we are not loading data anymore
+    this._isLoading = false;
+    // we are not waiting for a response anymore
+    this._transitionsManager.isWaiting = false;
+    // reset the transition overriding flag
+    this._transitionsManager.isOverriding = false;
+};
+
+
+/*** PUBLIC METHODS ***/
+
+/**
+ * In case you want to punctually change the onLeaving duration value, call this in your onStart callback
+ *
+ * @param newDuration (integer): new duration (in milliseconds) to wait before calling onLeaving this time
+ */
+PJaxRouter.prototype.overrideTransitionDuration = function(newDuration) {
+    this._transitionsManager.isOverriding = true;
+    this._transitionsManager.overrideDuration = newDuration || 0;
+};
+
+/**
+ * Whether the current transition onLeaving callback duration has been overrided or not
+ *
+ * @returns {boolean}
+ */
+PJaxRouter.prototype.isTransitionOverrided = function() {
+    return this._transitionsManager.isOverriding;
 };
