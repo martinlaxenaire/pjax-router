@@ -1,5 +1,5 @@
 /**
- * PJaxRouter v1.0.1 by Martin Laxenaire
+ * PJaxRouter v1.0.2 by Martin Laxenaire
  *
  * Set up our routing script
  *
@@ -30,7 +30,6 @@ function PJaxRouter(params) {
 
     // used for our mutation observer
     this._mutations = {
-        countMutations: 0,
         mutationObserver: null,
         isActive: false,
     };
@@ -190,9 +189,7 @@ PJaxRouter.prototype._initEvents = function() {
         this._mutations.isActive = true;
 
         this._mutations.mutationObserver = new MutationObserver(function(mutations, observer){
-            if( mutations[0].addedNodes.length || mutations[0].removedNodes.length ) {
-                self._observedMutation(mutations);
-            }
+            self._observedMutation(mutations);
         });
     }
 };
@@ -338,22 +335,22 @@ PJaxRouter.prototype._waitForData = function(shouldUpdateHistory) {
  * @private
  * */
 PJaxRouter.prototype._observedMutation = function(mutations) {
+    // loop through all mutations
+    // if mutation added one or more nodes to our container, we have appended the data
     for(var i = 0; i < mutations.length; i++) {
-        var mutation = mutations[i];
+        // that's our content that has just been appended!
+        if(mutations[i].addedNodes.length && mutations[i].target.isEqualNode(this.container)) {
+            // stop listening to mutations until next navigation
+            this._mutations.mutationObserver.disconnect();
 
-        // count that as a useful mutation only if a non text node is added
-        if(mutation.addedNodes.length > 0) {
-            this._mutations.countMutations++;
+            var self = this;
+            setTimeout(function() {
+                self._newContentAdded();
+            }, 34); // wait for a couple tick just to be sure
+
+            // stop for loop
+            break;
         }
-    }
-
-    if(this._mutations.countMutations === 1) {
-        this._mutations.mutationObserver.disconnect();
-
-        var self = this;
-        setTimeout(function() {
-            self._newContentAdded();
-        }, 34); // wait for a couple tick just to be sure
     }
 };
 
@@ -409,8 +406,6 @@ PJaxRouter.prototype._appendData = function(shouldUpdateHistory) {
 
     if(content && content.children && content.children.length > 0) {
         if(this._mutations.isActive) {
-            this._mutations.countMutations = 0;
-
             // start observing mutation to detect when the data will be appended
             this._mutations.mutationObserver.observe(this.container, {
                 childList: true,
