@@ -1,5 +1,8 @@
 /**
- * PJaxRouter v1.0.2 by Martin Laxenaire
+ * PJaxRouter v1.0.3
+ *
+ * Author: Martin Laxenaire
+ * https://www.martin-laxenaire.fr/
  *
  * Set up our routing script
  *
@@ -168,12 +171,27 @@ PJaxRouter.prototype._initEvents = function() {
             return;
         }
 
+        // check if it has a download attribute
+        if(linkTarget.getAttribute("download")) {
+            return;
+        }
+
+        // check if a key is active
+        if(
+            e.ctrlKey
+            || e.metaKey
+            || e.shiftKey
+            || e.altKey
+        ) {
+            return;
+        }
+
         // check if this is a link to the exact same page
         if(window.location.pathname === href || window.location.href === href) {
             e.preventDefault();
             e.stopPropagation();
 
-            return false;
+            return;
         }
 
         self.lastLinkClicked = e.target;
@@ -181,6 +199,7 @@ PJaxRouter.prototype._initEvents = function() {
         e.preventDefault();
         e.stopPropagation();
 
+        // launch our navigation process
         self._launchAjaxNavigation(href, true);
     });
 
