@@ -3,6 +3,6 @@
   "version": "1.0.2",
   "main": "build/pjax.router.js",
   "author": "martinlaxenaire",
-  "homepage": "https://github.com/martinlaxenaire/curtainsjs",
+  "homepage": "https://github.com/martinlaxenaire/pjax-router",
   "description": "Really simple PJAX router."
 }
