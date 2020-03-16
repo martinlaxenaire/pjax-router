@@ -1,9 +1,15 @@
 /**
- * PJaxRouter v1.0.3
+ * PJaxRouter v1.0.4
+ * https://github.com/martinlaxenaire/pjax-router
  *
  * Author: Martin Laxenaire
  * https://www.martin-laxenaire.fr/
  *
+ * */
+
+"use strict";
+
+/**
  * Set up our routing script
  *
  * @param params (object): parameters object with our container, event callbacks...
@@ -19,12 +25,14 @@ function PJaxRouter(params) {
         }],
     };
 
+    this.cache = [];
+
     this._isLoading = false;
     this._ajaxCalls = 0;
 
     this._transitionsManager = {
         override: false,
-        overrideDuration: 0,
+        overrideDuration: 50,
         isWaiting: false,
     };
 
@@ -61,6 +69,10 @@ PJaxRouter.prototype._initParams = function(params) {
         container: document.body,
         cancelNavigationClass: null,
 
+        cacheLinks: null,
+        cacheNavigatedPages: false,
+        cacheLength: 10,
+
         onStart: {
             value: function() {}
         },
@@ -86,6 +98,15 @@ PJaxRouter.prototype._initParams = function(params) {
     }
     this.container = this.params.container;
 
+    // cache first page if needed
+    if(this.params.cacheNavigatedPages) {
+        this._cacheResponse(window.location.href, document.documentElement.innerHTML);
+    }
+
+    // cache link contents
+    if(this.params.cacheLinks) {
+        this._cacheContainerLinks();
+    }
 };
 
 /**
@@ -144,7 +165,7 @@ PJaxRouter.prototype._initEvents = function() {
         }
 
         if (!shouldStay) {
-            self._launchAjaxNavigation(window.location.href, false);
+            self._launchNavigation(window.location.href, false);
         }
     });
 
@@ -194,13 +215,13 @@ PJaxRouter.prototype._initEvents = function() {
             return;
         }
 
-        self.lastLinkClicked = e.target;
+        self.lastLinkClicked = linkTarget;
 
         e.preventDefault();
         e.stopPropagation();
 
         // launch our navigation process
-        self._launchAjaxNavigation(href, true);
+        self._launchNavigation(href, true);
     });
 
     // mutation observer
@@ -208,8 +229,70 @@ PJaxRouter.prototype._initEvents = function() {
         this._mutations.isActive = true;
 
         this._mutations.mutationObserver = new MutationObserver(function(mutations, observer){
+            // observe our mutations
             self._observedMutation(mutations);
         });
+    }
+};
+
+
+/*** CACHING ***/
+
+/**
+ * Add an entry into our cache. An entry consists of:
+ *  - the href
+ *  - the content inside our defined container (as a string)
+ *  - the page title
+ *
+ * @param href (string): href to load
+ * @param response (string): our AJAX response
+ *
+ * @private
+ */
+PJaxRouter.prototype._cacheResponse = function(href, response) {
+    var content = this._parseResponseContent(response);
+
+    var cache = {
+        href: href,
+        HTMLContent: content,
+        title: response.match(/<title[^>]*>([^<]+)<\/title>/)[1]
+    };
+
+    // if we reached cache limit, remove oldest entry
+    if(this.cache.length >= this.params.cacheLength) {
+        this.cache.splice(0, 1);
+    }
+
+    this.cache.push(cache);
+};
+
+/**
+ * Each time this function gets called (on init and after a successful transition)
+ * We check for our links element that need to be cached and make an AJAX call for each one of them
+ * We then push the response in our cache array
+ *
+ * @private
+ */
+PJaxRouter.prototype._cacheContainerLinks = function() {
+    var cachedLinks = this.container.querySelectorAll(this.params.cacheLinks);
+
+    for(var i = 0; i < cachedLinks.length; i++) {
+        var href = cachedLinks[i].href;
+
+        // cache it only if it is not already in the cache
+        var shouldCache = true;
+        for(var j = 0; j < this.cache.length; j++) {
+            if(href === this.cache[j].href) {
+                shouldCache = false;
+            }
+        }
+
+        if(shouldCache) {
+            var self = this;
+            this._AJAXCall(href, false, function(response) {
+                self._cacheResponse(href, response);
+            });
+        }
     }
 };
 
@@ -232,15 +315,37 @@ PJaxRouter.prototype._initEvents = function() {
  *
  * @private
  */
-PJaxRouter.prototype._launchAjaxNavigation = function(href, shouldUpdateHistory) {
+PJaxRouter.prototype._launchNavigation = function(href, shouldUpdateHistory) {
     if(!this._isLoading) {
-        this._routing(href, shouldUpdateHistory);
+        // empty the old datas
+        this.router.nextHTMLContent = null;
 
         // on before
         this.params.onStart.value(this.router.history[this.router.history.length - 1].href, href);
 
         // do we need to override default transition duration?
         var leavingDuration = this._transitionsManager.isOverriding ? this._transitionsManager.overrideDuration : this.params.onLeaving.duration;
+
+        // no need to do a real routing if we already cached the page!
+        if(this.cache.length > 0) {
+            var cachedPage = null;
+            for(var i = 0; i < this.cache.length; i++) {
+                if(this.cache[i].href === href) {
+                    cachedPage = this.cache[i];
+                }
+            }
+        }
+
+        if(cachedPage) {
+            // simply set our router next html content so the process can go on
+            this.router.nextHref = cachedPage.href;
+            this.router.nextHTMLContent = cachedPage.HTMLContent;
+            this.router.nextTitle = cachedPage.title;
+        }
+        else {
+            this._routing(href, shouldUpdateHistory);
+        }
+
 
         var self = this;
         setTimeout(function() {
@@ -259,8 +364,39 @@ PJaxRouter.prototype._launchAjaxNavigation = function(href, shouldUpdateHistory)
 
 
 /**
- * This is where we're making our AJAX call and we're waiting for its response
- * Can call onWaiting and onError callbacks if necessary
+ * Parse our response and get the content
+ *
+ * @param response (string): our AJAX response
+ *
+ * @private
+ */
+PJaxRouter.prototype._parseResponseContent = function(response) {
+    var tempHtml = document.createElement('html');
+    tempHtml.innerHTML = response;
+
+    var selector = "";
+    if(this.container.getAttribute("id")) {
+        selector = "#" + this.container.getAttribute("id");
+    }
+    else if(this.container.classList.length) {
+        for(var i = 0; i < this.container.classList.length; i++) {
+            selector += "." + this.container.classList[i];
+        }
+    }
+    else {
+        selector = this.container.tagName;
+    }
+
+    var content = tempHtml.querySelector(selector).innerHTML;
+    tempHtml = null;
+
+    return content;
+};
+
+
+/**
+ * Before doing the navigation AJAX call we're resetting our nextHref and nextHTMLContent values
+ * Then we launch the call
  *
  * @param href (string): URL to navigate to
  * @param shouldUpdateHistory (bool): whether the router history object should be updated (true by default, false when navigation has been triggered by back/forth browser history)
@@ -280,39 +416,73 @@ PJaxRouter.prototype._routing = function(href, shouldUpdateHistory) {
         this.router.nextHref = this.router.history[this.router.history.length - 1].href;
     }
 
-    // empty the old datas
-    this.router.nextHTMLContent = null;
-
     if(this.router.nextHref) {
-        // handling ajax
-        var xhr = new XMLHttpRequest();
-
         var self = this;
+        this._AJAXCall(href, shouldUpdateHistory, function(response) {
+            var content = self._parseResponseContent(response);
 
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === 4 && (xhr.status === 200 || xhr.status === 0)) {
-                self.router.nextHTMLContent = xhr.response;
-            }
-            else if(xhr.readyState === 4 && xhr.status !== 404 && self._ajaxCalls < 4) {
-                if(self._ajaxCalls === 0 && !self._transitionsManager.isWaiting) {
-                    self._transitionsManager.isWaiting = true;
-                    self.params.onWaiting.value(self.router.history[self.router.history.length - 1].href, self.router.nextHref);
+            self.router.nextHTMLContent = content;
+            self.router.nextTitle = response.match(/<title[^>]*>([^<]+)<\/title>/)[1];
+
+            if(self.params.cacheNavigatedPages) {
+                // cache it only if it is not already in the cache
+                var shouldCache = true;
+                for(var j = 0; j < self.cache.length; j++) {
+                    if(href === self.cache[j].href) {
+                        shouldCache = false;
+                    }
                 }
 
-                self._ajaxCalls++;
-                self._routing(self.router.nextHref, shouldUpdateHistory);
+                if(shouldCache) {
+                    self._cacheResponse(href, response);
+                }
             }
-            else if(xhr.readyState === 4) {
-                self._resetRoutingState();
-
-                self.params.onError.value(self.router.history[self.router.history.length - 1].href, self.router.nextHref);
-            }
-        };
-
-        xhr.open("GET", href, true);
-        xhr.setRequestHeader("Accept", "text/html");
-        xhr.send(null);
+        });
     }
+};
+
+
+/**
+ * This is where we're making our AJAX call and we're waiting for its response
+ * Can call onWaiting and onError callbacks if necessary
+ *
+ * @param href (string): URL to navigate to
+ * @param shouldUpdateHistory (bool): whether the router history object should be updated (true by default, false when navigation has been triggered by back/forth browser history)
+ * @param callback (function): function to be executed once our AJAX call is successful
+ *
+ * @private
+ */
+PJaxRouter.prototype._AJAXCall = function(href, shouldUpdateHistory, callback) {
+    // handling ajax
+    var xhr = new XMLHttpRequest();
+
+    var self = this;
+
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4 && (xhr.status === 200 || xhr.status === 0)) {
+            if(callback) {
+                callback(xhr.response);
+            }
+        }
+        else if(xhr.readyState === 4 && xhr.status !== 404 && self._ajaxCalls < 4) {
+            if(self._ajaxCalls === 0 && !self._transitionsManager.isWaiting) {
+                self._transitionsManager.isWaiting = true;
+                self.params.onWaiting.value(self.router.history[self.router.history.length - 1].href, self.router.nextHref);
+            }
+
+            self._ajaxCalls++;
+            self._routing(self.router.nextHref, shouldUpdateHistory, callback);
+        }
+        else if(xhr.readyState === 4) {
+            self._resetRoutingState();
+
+            self.params.onError.value(self.router.history[self.router.history.length - 1].href, self.router.nextHref);
+        }
+    };
+
+    xhr.open("GET", href, true);
+    xhr.setRequestHeader("Accept", "text/html");
+    xhr.send(null);
 };
 
 
@@ -388,6 +558,11 @@ PJaxRouter.prototype._newContentAdded = function() {
 
         // reset ajax calls and loading flags
         self._resetRoutingState();
+
+        // check for cached links
+        if(self.params.cacheLinks) {
+            self._cacheContainerLinks();
+        }
     }, 0);
 };
 
@@ -400,11 +575,12 @@ PJaxRouter.prototype._newContentAdded = function() {
  */
 PJaxRouter.prototype._appendData = function(shouldUpdateHistory) {
 
-    var pageTitle = this.router.nextHTMLContent.match(/<title[^>]*>([^<]+)<\/title>/)[1];
+    //var pageTitle = this.router.nextHTMLContent.match(/<title[^>]*>([^<]+)<\/title>/)[1];
+    var pageTitle = this.router.nextTitle;
 
     // handle history with pushState
     if(shouldUpdateHistory) {
-        window.history.pushState(this.router, pageTitle, this.router.nextHref);
+        window.history.pushState({}, pageTitle, this.router.nextHref);
     }
     document.title = pageTitle;
 
@@ -413,17 +589,11 @@ PJaxRouter.prototype._appendData = function(shouldUpdateHistory) {
         href: this.router.nextHref,
         title: pageTitle
     });
-
-    // append our response to a div
-    var tempHtml = document.createElement('div');
-    tempHtml.insertAdjacentHTML("beforeend", this.router.nextHTMLContent);
-
-    var content = tempHtml.querySelector("#" + this.container.getAttribute("id"));
-    tempHtml = null;
+    var content = this.router.nextHTMLContent;
 
     var self = this;
 
-    if(content && content.children && content.children.length > 0) {
+    if(content) {
         if(this._mutations.isActive) {
             // start observing mutation to detect when the data will be appended
             this._mutations.mutationObserver.observe(this.container, {
@@ -437,14 +607,8 @@ PJaxRouter.prototype._appendData = function(shouldUpdateHistory) {
             }, content.children.length * 25);
         }
 
-
-        // empty our content div and append our new content
-        var tempContent = document.createDocumentFragment();
-        while(content.hasChildNodes()) {
-            tempContent.appendChild(content.firstChild);
-        }
-        this.container.innerHTML = "";
-        this.container.appendChild(tempContent);
+        // append our new content
+        this.container.innerHTML = content;
     }
 
 };
@@ -476,7 +640,7 @@ PJaxRouter.prototype._resetRoutingState = function() {
  */
 PJaxRouter.prototype.overrideTransitionDuration = function(newDuration) {
     this._transitionsManager.isOverriding = true;
-    this._transitionsManager.overrideDuration = newDuration || 0;
+    this._transitionsManager.overrideDuration = newDuration || 50;
 };
 
 /**

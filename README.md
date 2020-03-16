@@ -16,17 +16,23 @@ var router = new PJaxRouter();
 
 <h4>Basic params</h4>
 
-There are 2 basic parameters that you can specify:
+There are 5 basic parameters that you can specify:
 
 | Parameter  | Type | Default | Description |
 | --- | --- | --- | --- |
 | container  | HTML node | document.body | The container inside which the content will be replaced after each AJAX calls |
 | cancelNavigationClass | String | "" | A class to apply to link that should not trigger AJAX navigation |
+| cacheLinks | CSS Selector | "" | A CSS selector to match links on the page you'd like to cache on init and after each successful navigation |
+| cacheNavigatedPages | Boolean | false | Whether to cache the page where you just navigated (including first page loaded) |
+| cacheLength | Number | 10 | Maximum number of cached pages |
 
 ```javascript
 var router = new PJaxRouter({
     container: document.getElementById("content"), // container where datas will be removed/appended
-    cancelNavigationClass: "out" // links with that class does not trigger PJAX navigation
+    cancelNavigationClass: "out", // links with that class does not trigger PJAX navigation
+    cacheLinks: ".important-pages", // cache pages for all the links that have the ".important-pages" class on init and after each successful navigation
+    cacheNavigatedPages: true, // add the current page to the cache after each successful navigation
+    cacheLength: 15, // set the cache size to 15 entries
 });
 ```
 
@@ -43,7 +49,10 @@ var router = new PJaxRouter({
 ```javascript
 var router = new PJaxRouter({
     container: document.getElementById("content"), // container where datas will be striped/appended
-    cancelNavigationClass: "out" // links with that class does not trigger PJAX navigation
+    cancelNavigationClass: "out", // links with that class does not trigger PJAX navigation
+    cacheLinks: ".important-pages", // cache pages for all the links that have the ".important-pages" class on init and after each successful navigation
+    cacheNavigatedPages: true, // add the current page to the cache after each successful navigation
+    cacheLength: 15, // set the cache size to 15 entries
     
     onStart: {
         value: function(currentPage, nextPage) {

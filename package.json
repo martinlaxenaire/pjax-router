@@ -1,8 +1,8 @@
 {
   "name": "pjax-router",
-  "version": "1.0.2",
-  "main": "build/pjax.router.js",
+  "version": "1.0.4",
+  "main": "build/pjax.router.es.min.js",
   "author": "martinlaxenaire",
-  "homepage": "https://github.com/martinlaxenaire/curtainsjs",
+  "homepage": "https://github.com/martinlaxenaire/pjax-router",
   "description": "Really simple PJAX router."
 }
