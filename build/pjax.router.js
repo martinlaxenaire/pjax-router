@@ -1,5 +1,5 @@
 /**
- * PJaxRouter v1.0.4
+ * PJaxRouter v1.0.5
  * https://github.com/martinlaxenaire/pjax-router
  *
  * Author: Martin Laxenaire
@@ -289,8 +289,8 @@ PJaxRouter.prototype._cacheContainerLinks = function() {
 
         if(shouldCache) {
             var self = this;
-            this._AJAXCall(href, false, function(response) {
-                self._cacheResponse(href, response);
+            this._AJAXCall(href, false, function(response, url) {
+                self._cacheResponse(url, response);
             });
         }
     }
@@ -418,7 +418,7 @@ PJaxRouter.prototype._routing = function(href, shouldUpdateHistory) {
 
     if(this.router.nextHref) {
         var self = this;
-        this._AJAXCall(href, shouldUpdateHistory, function(response) {
+        this._AJAXCall(href, shouldUpdateHistory, function(response, url) {
             var content = self._parseResponseContent(response);
 
             self.router.nextHTMLContent = content;
@@ -428,13 +428,13 @@ PJaxRouter.prototype._routing = function(href, shouldUpdateHistory) {
                 // cache it only if it is not already in the cache
                 var shouldCache = true;
                 for(var j = 0; j < self.cache.length; j++) {
-                    if(href === self.cache[j].href) {
+                    if(url === self.cache[j].href) {
                         shouldCache = false;
                     }
                 }
 
                 if(shouldCache) {
-                    self._cacheResponse(href, response);
+                    self._cacheResponse(url, response);
                 }
             }
         });
@@ -461,7 +461,7 @@ PJaxRouter.prototype._AJAXCall = function(href, shouldUpdateHistory, callback) {
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && (xhr.status === 200 || xhr.status === 0)) {
             if(callback) {
-                callback(xhr.response);
+                callback(xhr.response, xhr.responseURL);
             }
         }
         else if(xhr.readyState === 4 && xhr.status !== 404 && self._ajaxCalls < 4) {
@@ -471,7 +471,8 @@ PJaxRouter.prototype._AJAXCall = function(href, shouldUpdateHistory, callback) {
             }
 
             self._ajaxCalls++;
-            self._routing(self.router.nextHref, shouldUpdateHistory, callback);
+            //self._routing(self.router.nextHref, shouldUpdateHistory, callback);
+            self._routing(xhr.responseURL, shouldUpdateHistory, callback);
         }
         else if(xhr.readyState === 4) {
             self._resetRoutingState();

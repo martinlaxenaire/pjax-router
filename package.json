@@ -1,6 +1,6 @@
 {
   "name": "pjax-router",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "main": "build/pjax.router.es.min.js",
   "author": "martinlaxenaire",
   "homepage": "https://github.com/martinlaxenaire/pjax-router",
